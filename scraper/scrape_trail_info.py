@@ -175,7 +175,12 @@ class FourteenerScraper:
 
         print(routes_text)
 
-        ### TO DO: parse this text to get the info I want ###
+        ### TO DO: parse this text to get the info I want:
+        # - route name
+        # - class
+        # - distance
+        # - elevation gain
+         ###
 
         exit()
 
