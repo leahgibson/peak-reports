@@ -10,6 +10,7 @@ import time
 from datetime import datetime
 from typing import List, Dict
 import re
+import os
 
 class FourteenerScraper:
     """Scraper for static trail information from 14ers.com"""
@@ -82,7 +83,6 @@ class FourteenerScraper:
             'lon': None,
             'county': None,
             'routes': [],
-            'scraped_at': datetime.now
         }
 
         # Scrape peak info
@@ -138,12 +138,9 @@ class FourteenerScraper:
                 trail_data['routes'] = self.extract_routes(peak_num, peak_url)
             else:
                 print("Warning: Could not find tab2-content div.")
-                exit()
 
         except requests.RequestException as e:
             print(f"Error fetching routes: {e}")
-        
-        exit()
         
         return trail_data
     
@@ -160,36 +157,89 @@ class FourteenerScraper:
         """
         
         url = "https://www.14ers.com/php14ers/ajax_peak_getroutes.php"
-        params = {"peakid": peak_id}
+        try:
+            params = {"peakid": peak_id}
 
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-            'Referer': peak_url,
-            'X-Requested-With': 'XMLHttpRequest',
-            'Accept': '*/*'
-        }
-        time.sleep(self.delay)
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'Referer': peak_url,
+                'X-Requested-With': 'XMLHttpRequest',
+                'Accept': '*/*'
+            }
+            time.sleep(self.delay)
 
-        r = requests.get(url, params=params, headers=headers, timeout=10)
-        routes_text = BeautifulSoup(r.text, "html.parser")
+            r = requests.get(url, params=params, headers=headers, timeout=10)
+            routes_output = BeautifulSoup(r.text, "html.parser")
 
-        print(routes_text)
+            routes_table = routes_output.find('table', id='routeResults')
+            if not routes_table:
+                print(f"Warning: No routes table found for peak {peak_id}")
+                return []
+            
+            routes = []
 
-        ### TO DO: parse this text to get the info I want:
-        # - route name
-        # - class
-        # - distance
-        # - elevation gain
-         ###
+            route_rows = routes_table.find_all('tr')
+            for row in route_rows:
+                # Description column
+                desc_col = row.find('td', class_='colDescription1')
+                if not desc_col:
+                    continue
 
-        exit()
+                # Route Name
+                name_div = desc_col.find('div', class_='linkButton')
+                route_name = name_div.get_text(strip=True) if name_div else None
+                if not route_name:
+                    continue
 
+                # Details
+                details_div = desc_col.find('div', style=lambda x:x and 'white-space' in x)
+                details_text = details_div.get_text() if details_div else ""
 
+                route_data = {
+                    'name': route_name,
+                    'class': None,
+                    'elevation_gain': None,
+                    'distance': None,
+                    'is_standard': False,
+                    'is_snow_climb': False
+                }
 
+                # Class of route
+                class_span = desc_col.find('span', class_=re.compile(r'class\d+'))
+                if class_span:
+                    class_text = class_span.get_text(strip=True)
+                    class_match = re.search(r'Class\s+(\d+)', class_text)
+                    if class_match:
+                        route_data['class'] = int(class_match.group(1))
+                
+                # Elevation gain
+                gain_match = re.search(r'Total Elevation Gain:\s*([\d,]+)', details_text)
+                if gain_match:
+                    route_data['elevation_gain'] = int(gain_match.group(1).replace(',', ''))
+                
+                # Distance
+                dist_match = re.search(r'Round-trip Distance:\s*([\d.]+)\s*mi', details_text)
+                if dist_match:
+                    route_data['distance'] = float(dist_match.group(1))
+                
+                # Check for standard route & snow climbs (star and snowflake)
+                icons_col = row.find('td', class_='colIcons')
+                if icons_col:
+                    if icons_col.find('span', class_='fa-star') or icons_col.find('span', class_='fa-solid fa-star'):
+                        route_data['is_standard'] = True
+                    if icons_col.find('img', title='Snow Climb'):
+                        route_data['is_snow_climb'] = True
+                
+                routes.append(route_data)
+            
+            print(f"Found {len(routes)} routes")
+
+            return routes
+    
+        except requests.RequestException as e:
+            print(f"Error fetching routes for {peak_id}: {e}")
+            return []
         
-
-
-
 
     def scrape_all_trails(self, output_file: str = 'scraper/data/trails.json'):
         """
@@ -211,6 +261,24 @@ class FourteenerScraper:
         for i, peak_url in enumerate(peak_urls, 1):
             print(f"\n[{i}/{len(peak_urls)}] {peak_url}")
             trail_data = self.scrape_trail_details(peak_url)
+
+            if trail_data and trail_data['name']:
+                all_trails.append(trail_data)
+            else:
+                print(f"Warning: No data found for {peak_url}")
+        
+        # Save all data to JSON
+        print(f"\n{'=' * 60}")
+        print(f"Scraped {len(all_trails)} trails successfully")
+        print(f"Saving to {output_file}...")
+
+        os.makedirs(os.path.dirname(output_file), exist_ok=True)
+
+        with open(output_file, 'w', encoding='utf-8') as f:
+            json.dump(all_trails, f, indent=2, ensure_ascii=False)
+        
+        print(f"Data saved to {output_file}")
+
 
 def main():
     """Run the scraper"""
