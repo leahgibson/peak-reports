@@ -45,18 +45,19 @@ class ReportScraper:
         for peak_num in range(start_peak, end_peak+1):
             logger.info(f"Scraping peak {peak_num}/{end_peak}...")
 
-            #try:
-            reports = self.scrape_peak(peak_num)
-            all_reports.extend(reports)
-            logger.info(f" Found {len(reports)} reports")
+            try:
+                reports = self.scrape_peak(peak_num)
+                all_reports.extend(reports)
+                logger.info(f" Found {len(reports)} reports")
 
-            self._save_reports(all_reports)
-
-            time.sleep(self.DELAY_BETWEEN_REQUESTS)
+                time.sleep(self.DELAY_BETWEEN_REQUESTS)
             
-            # except Exception as e:
-            #     logger.error(f"Error scraping peak {peak_num}: {e}")
-            #     continue
+            except Exception as e:
+                logger.error(f"Error scraping peak {peak_num}: {e}")
+                continue
+        
+        logger.info(f"Scraping complete! Saving {len(all_reports)} reports")
+        self._save_reports(all_reports)
     
     def scrape_peak(self, peak_num):
         """
