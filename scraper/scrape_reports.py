@@ -167,7 +167,7 @@ class ReportScraper:
 def main():
     scraper = ReportScraper()
 
-    scraper.scrape_all_peaks(start_peak=1, end_peak=3)
+    scraper.scrape_all_peaks(start_peak=1, end_peak=53)
 
 if __name__ == "__main__":
     main()
