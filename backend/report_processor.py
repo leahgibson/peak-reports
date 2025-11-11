@@ -35,5 +35,30 @@ class TrailReportProcessor:
 
         print("Model loaded sucessfully!")
     
+    def calculate_temporal_weight(self, trip_date_str: str, reference_date: datetime = None):
+        """Calculate temperal weight of report based on report age"""
+
+        if reference_date is None:
+            reference_date = datetime.now()
+        
+        try:
+            trip_date = datetime.strptime(trip_date_str, "%m/%d/%Y")
+        except Exception:
+            return 0.1 # very low weight for unparsable date
+        
+        days_ago = (reference_date - trip_date).days
+
+        if days_ago <= 3:
+            return 1.0
+        elif days_ago <= 7:
+            return 0.7
+        elif days_ago <= 14:
+            return 0.4
+        elif days_ago <= 30:
+            return 0.2
+        else:
+            return 0.1
+        
     
+
 
