@@ -7,13 +7,15 @@ import re
 from datetime import datetime
 from typing import List, Dict, Any
 import json
+import numpy as np
 
 from transformers import pipeline, AutoTokenizer, AutoModelForCausalLM
+from sentence_transformers import SentenceTransformer
 
 class TrailReportProcessor:
     """Process 14er trail reports to extract conditions and status"""
 
-    def __init__(self):
+    def __init__(self, similarity_threshold=0.75):
 
         print("Loading model...")
         model_name = "google/flan-t5-base"
@@ -27,6 +29,9 @@ class TrailReportProcessor:
             max_lenth=512
         )
 
+        self.embedder = SentenceTransformer('all-MiniLM-L6-v2')  # ~80MB, very fast
+        self.similarity_threshold = similarity_threshold
+
         print("Model loaded sucessfully!")
     
     def calculate_temporal_weight(self, trip_date_str: str, reference_date: datetime = None):
@@ -38,20 +43,22 @@ class TrailReportProcessor:
         try:
             trip_date = datetime.strptime(trip_date_str, "%m/%d/%Y")
         except Exception:
-            return 0.1 # very low weight for unparsable date
+            return 0.0 # no weight for unparsable date
         
         days_ago = (reference_date - trip_date).days
 
         if days_ago <= 3:
             return 1.0
         elif days_ago <= 7:
-            return 0.7
+            return 0.8
         elif days_ago <= 14:
-            return 0.4
+            return 0.5
         elif days_ago <= 30:
             return 0.2
+        elif days_ago <= 45:
+            return 0.0
         else:
-            return 0.1
+            return 0.0
     
     def process_report(self, report):
         """Process and extract structured information via prompts"""
@@ -96,6 +103,56 @@ class TrailReportProcessor:
 
         return extraction
 
+    def group_terms(self, terms_dict: Dict):
+        """
+        Groups processed report using semantic similarity to 
+        minimize similar terms (i.e. high wings & windy)
+        """
+
+        terms = list(terms_dict.keys())
+
+        if len(terms) == 1:
+            return terms_dict
+        
+        # Encode all terms into embeddings
+        embeddings = self.embedder.encode(terms)
+
+        # Compute pairwise cosine similarities
+        n = len(terms)
+        similarity_matrix = np.zeros((n, n))
+
+        ## TO DO: compute cosine sim between pairs
+
+
+
+
+
+
+    def aggregate_route_reports(self, reports: List[Dict], peak_name, route):
+        """
+        Aggregate multiple reports (for same peak) for a singel route with temporal weighting
+
+        All reports should be for the same peak & route
+        """
+
+        if not reports:
+            return None
+        
+        print(f"Aggregating {len(reports)} reports for {peak_name} - {route}")
+
+        # Calculate weights based on report date
+        weighted_reports = []
+        for report in reports:
+            weight = self.calculate_temporal_weight(report['trip_date'])
+            weighted_reports.append({
+                'report': report,
+                'weight': weight
+            })
+
+        total_weight = sum(wr['weight'] for wr in weighted_reports)
+
+        ## TO DO: make dict to then pass to group_terms to remove similar terms
+        
 
     
 
