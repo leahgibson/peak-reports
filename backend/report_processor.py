@@ -110,6 +110,7 @@ class TrailReportProcessor:
         """
 
         terms = list(terms_dict.keys())
+        weights = list(terms_dict.values())
 
         if len(terms) == 1:
             return terms_dict
@@ -121,11 +122,62 @@ class TrailReportProcessor:
         n = len(terms)
         similarity_matrix = np.zeros((n, n))
 
-        ## TO DO: compute cosine sim between pairs
+        for i in range(n):
+            for j in range(i+1, n):
+                similarity = np.dot(embeddings[i], embeddings[j]) / (
+                    np.linalg.norm(embeddings[i]) * np.linalg.norm(embeddings[j])
+                )
+                similarity_matrix[i, j] = similarity
+                similarity_matrix[j, i] = similarity
+        
+        # Group similar terms
+        groups = []
+        assigned = set()
 
+        for i in range(n):
+            if i in assigned:
+                continue
 
+            group = [i]
+            assigned.add(i)
 
+            # Find all terms similar to (or transitively similar) to term i
+            queue = [i]
+            while queue:
+                current = queue.pop(0)
 
+                for j in range(n):
+                    if j not in assigned and similarity_matrix[current, j] >= self.similarity_threshold:
+                        group.append(j)
+                        assigned.add(j)
+                        queue.append(j)
+            
+            groups.append(group)
+        
+        print(groups)
+        
+        if len(assigned) < n:
+            print("WARNING: Not all items assigned!")
+            print(groups)
+        
+        # For each group, assign canonical name and proper temporal weight
+        new_terms_dict = {}
+        for group in groups:
+            # Canonical name goes to whichever embedding is mose similar to all other items
+            # Computed by selecting max(sum(embeddings))
+            # If tie, select first entry
+            group_matrix = similarity_matrix[np.ix_(group, group)]
+            col_sums = group_matrix.sum(axis=0)
+            max_index = np.argmax(col_sums)
+            canonical_name = terms[group[max_index]] 
+
+            # Overall weight is maximum of term weights
+            group_weights = [weights[i] for i in group]
+            overall_weight = np.max(group_weights)
+
+            new_terms_dict[canonical_name] = overall_weight
+        
+        return new_terms_dict
 
 
     def aggregate_route_reports(self, reports: List[Dict], peak_name, route):
@@ -148,8 +200,6 @@ class TrailReportProcessor:
                 'report': report,
                 'weight': weight
             })
-
-        total_weight = sum(wr['weight'] for wr in weighted_reports)
 
         ## TO DO: make dict to then pass to group_terms to remove similar terms
         
