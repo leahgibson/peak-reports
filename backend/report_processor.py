@@ -4,6 +4,7 @@ Combined rule-based extraction with zero-shot classification
 """
 
 import re
+import os
 from datetime import datetime
 from typing import List, Dict, Any
 from collections import defaultdict
@@ -101,6 +102,9 @@ class TrailReportProcessor:
             'warnings': warnings_list,
             'elevation_context': elevation_context,
         }
+
+        print(extraction)
+        exit()
 
         return extraction
 
@@ -253,18 +257,82 @@ class TrailReportProcessor:
             'trail_conditions': trail_conditions,
             'equipment': equipment,
             'warnings': warnings,
-            'elevation_context': elevation_report
+            'elevation_context': elevation_report,
+            'update_date': datetime.today().strftime("%m/%d/%Y")
         }
 
         return aggregated_report
     
-    def process_reports(self):
-        """Processes all reports.
+    def process_all_reports(self, reports: List[Dict]):
+        """Processes all reports."""
+
+        print(f"\n{'='*60}")
+        print(f"Processing {len(reports)} total reports")
+        print(f"{'='*60}")
+
+        # Extract info from each report
+        processed_reports = []
+        for i, report in enumerate(reports):
+            print(f"[{i+1}/{len(reports)}]")
+            try:
+                processed = self.process_report(report)
+                processed_reports.append(processed)
+            except Exception as e:
+                print(f" ERROR: {str(e)}")
+                continue
         
-        TODO:
-        - group by route
-        - pass to aggregator
-        """
+        # Group reports by peak
+        by_peak = defaultdict(list)
+        for report in processed_reports:
+            by_peak[report['peak_name']].append(report)
+        
+        # For each peak, group by route
+        peak_route_groupings = {}
+        for peak_name, reports in by_peak.items():
+            peak_route_groupings[peak_name] = defaultdict(list)
+            for report in reports:
+                peak_route_groupings[peak_name][report["route"]].append(report)
+        
+        # Aggregate route reports
+        aggregated_results = []
+        for peak_name, route_reports in peak_route_groupings.items():
+            for route, reports in route_reports.items():
+                aggregated_results.append(self.aggregate_route_reports(self, reports, peak_name, route))
+        
+
+        return aggregated_results
+    
+
+if __name__ == "__main__":
+
+    print("Loading reports...")
+    # Load json of reports
+    with open("scraper/data/reports/reports_20251107_143336.json", 'r') as file:
+        reports = json.load(file)
+    print("Reports loaded")
+
+    processor = TrailReportProcessor()
+
+    results = processor.process_all_reports(reports)
+
+    # Save results
+    output_file = "route_status_results.json"
+    output_path = os.path.join("backend/data", output_file)
+    with open(output_path, 'w', encoding='utf-8') as f:
+        json.dump(results, f, indent=2)
+    
+    print("Results saved.")
+
+
+
+
+
+### NOTE: for future implmentation, will save past terms and weights and just pass this to update status###
+
+
+
+
+
 
 
 
