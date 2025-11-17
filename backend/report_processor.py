@@ -6,6 +6,7 @@ Combined rule-based extraction with zero-shot classification
 import re
 from datetime import datetime
 from typing import List, Dict, Any
+from collections import defaultdict
 import json
 import numpy as np
 
@@ -86,7 +87,7 @@ class TrailReportProcessor:
         
 
         # Extract elevation info
-        elevation_prompt = f"""Read this hiking trip report and identify at what elevation the conditions changed or became notable (e.g., "above 13000 ft", "at treeline"). Return only the elevation description or "not specified". Trip report: {content}"""
+        elevation_prompt = f"""Read this hiking trip report and identify at what elevation the conditions changed or became notable (e.g., "snow above 13000 ft", "at treeline"). Return only the condition and the associated elevation description or "not specified". Trip report: {content}"""
         elevation_response = self.generator(elevation_prompt, max_length=50, num_return_sequences=1)[0]['generated_text']
         elevation_context = elevation_response.strip()
 
@@ -105,8 +106,10 @@ class TrailReportProcessor:
 
     def group_terms(self, terms_dict: Dict):
         """
-        Groups processed report using semantic similarity to 
-        minimize similar terms (i.e. high wings & windy)
+        Groups processed report using semantic similarity to minimize similar terms (i.e. high wings & windy)
+
+        Returns: 
+        dict where key is canonical term and value is list of weights from similar terms
         """
 
         terms = list(terms_dict.keys())
@@ -160,10 +163,10 @@ class TrailReportProcessor:
             print("WARNING: Not all items assigned!")
             print(groups)
         
-        # For each group, assign canonical name and proper temporal weight
+        # For each group, assign canonical name and list of weights
         new_terms_dict = {}
         for group in groups:
-            # Canonical name goes to whichever embedding is mose similar to all other items
+            # Canonical name goes to whichever embedding is most similar to all other items
             # Computed by selecting max(sum(embeddings))
             # If tie, select first entry
             group_matrix = similarity_matrix[np.ix_(group, group)]
@@ -171,11 +174,9 @@ class TrailReportProcessor:
             max_index = np.argmax(col_sums)
             canonical_name = terms[group[max_index]] 
 
-            # Overall weight is maximum of term weights
             group_weights = [weights[i] for i in group]
-            overall_weight = np.max(group_weights)
 
-            new_terms_dict[canonical_name] = overall_weight
+            new_terms_dict[canonical_name] = group_weights
         
         return new_terms_dict
 
@@ -194,14 +195,90 @@ class TrailReportProcessor:
 
         # Calculate weights based on report date
         weighted_reports = []
+        equipment_dict = defaultdict(list)
+        trail_conditions_dict = defaultdict(list)
+        warnings_dict = defaultdict(list)
+
+        elevation_report = []
+
         for report in reports:
             weight = self.calculate_temporal_weight(report['trip_date'])
             weighted_reports.append({
                 'report': report,
-                'weight': weight
+                'weights': weight
             })
 
-        ## TO DO: make dict to then pass to group_terms to remove similar terms
+            equipment_dict[report["equipment"]].append(weight)
+            trail_conditions_dict[report["trail_conditions"]].append(weight)
+            warnings_dict[report["warnings"]].append(weight)
+
+            # Add elevation context if most recent week
+            if weight >= 0.7:
+                elevation_report.append(report["elevation_context"])
+        
+        # Identify canonical terms
+        equipment_groups = self.group_terms(equipment_dict)
+        trail_conditions_groups = self.group_terms(trail_conditions_dict)
+        warnings_groups = self.group_terms(warnings_dict)
+
+        # Generate equipment list by recency
+        equipment = []
+        for item, weights in equipment_groups.items():
+            if max(weights) >= 0.2:
+                equipment.append(item)
+        
+        # Trail conditions determined by most reported & most recent
+        weighted_conditions = {key: sum(values) for key, values in trail_conditions_groups.items()}
+        conditions = list(weighted_conditions.keys())
+        condition_weights = list(weighted_conditions.values())
+        max_weight = max(condition_weights)
+        max_indices = [i for i, x in enumerate(condition_weights) if x == max_weight]
+        trail_conditions = [conditions[i] for i in max_indices]
+
+        # Warnings come from most recent week of reports
+        warnings = []
+        for warning, weights in warnings_groups.items():
+            if max(weights) >= 0.7:
+                warnings.append(warning)
+        
+        # Build full result
+        aggregated_report = {
+            'peak_name': peak_name,
+            'route': route,
+            'num_reports': len(reports),
+            'date_range': {
+                'oldest': min(r['trip_date'] for r in reports),
+                'newest': max(r['trip_date'] for r in reports)
+            },
+            'trail_conditions': trail_conditions,
+            'equipment': equipment,
+            'warnings': warnings,
+            'elevation_context': elevation_report
+        }
+
+        return aggregated_report
+    
+    def process_reports(self):
+        """Processes all reports.
+        
+        TODO:
+        - group by route
+        - pass to aggregator
+        """
+
+
+
+
+
+
+        
+
+
+        
+
+
+
+        
         
 
     
