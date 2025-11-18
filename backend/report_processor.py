@@ -5,13 +5,15 @@ Combined rule-based extraction with zero-shot classification
 
 import re
 import os
+import json
+import torch
+import numpy as np
 from datetime import datetime
 from typing import List, Dict, Any
 from collections import defaultdict
-import json
-import numpy as np
-
-from transformers import pipeline, AutoTokenizer, AutoModelForCausalLM
+from dotenv import load_dotenv
+from huggingface_hub import login
+from transformers import pipeline
 from sentence_transformers import SentenceTransformer
 
 class TrailReportProcessor:
@@ -19,16 +21,23 @@ class TrailReportProcessor:
 
     def __init__(self, similarity_threshold=0.75):
 
+        load_dotenv()
+
+        print("Logging in...")
+        token = os.getenv("HUGGINGFACE_TOKEN")
+        if token:
+            login(token=token)
+        else:
+            print("No HuggingFace Token found.")
+
         print("Loading model...")
-        model_name = "google/flan-t5-base"
-        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
-        self.generator_model = AutoModelForCausalLM.from_pretrained(model_name)
+        model_name = "meta-llama/Llama-3.2-3B-Instruct" 
         self.generator = pipeline(
-            "text2text-generation",
-            model=self.generator_model,
-            tokenizer=self.tokenizer,
-            device=-1,
-            max_lenth=512
+            "text-generation",
+            model=model_name,
+            device_map="auto",
+            torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
+            max_new_tokens=512
         )
 
         self.embedder = SentenceTransformer('all-MiniLM-L6-v2')  # ~80MB, very fast
@@ -69,18 +78,29 @@ class TrailReportProcessor:
         content = report["content"]
 
         # Extract equipment
-        equipment_prompt = f"""Read this hiking trip report and list ONLY the equipment that was mentioned as needed, required, recommended, or used. Return as a comma-separated list with no other text. Trip report: {content}"""
-        equipment_response = self.generator(equipment_prompt, max_length=100, num_return_sequences=1)[0]['generated_text']
+        equipment_prompt = f"""<|begin_of_text|><|start_header_id|>user<|end_header_id|>
+        Read this hiking trip report and list ONLY the equipment that was mentioned. Return as a comma-separated list with no other text. Trip report: {content}
+        <|eot_id|><|start_header_id|>assistant<|end_header_id|>"""
+        equipment_response = self.generator(equipment_prompt)[0]['generated_text']
+        equipment_response = equipment_response.split("<|start_header_id|>assistant<|end_header_id|>")[-1].strip()
+        equipment_response = equipment_response.replace("<|eot_id|>", "").strip()
+
+        print(equipment_response)
+        exit()
         equipment_list = [item.strip() for item in equipment_response.split(',') if item.strip()]
         
         # Extract trail conditions
-        conditions_prompt = f"""Read this hiking trip report and describe the trail surface conditions in 3-5 words (e.g., "snow covered icy", "dry and rocky", "muddy wet"). Return only the condition description. Trip report: {content}"""
-        conditions_response = self.generator(conditions_prompt, max_length=50, num_return_sequences=1)[0]['generated_text']
+        conditions_prompt = f"""<|begin_of_text|><|start_header_id|>user<|end_header_id|>
+        Read this hiking trip report and describe the trail surface conditions in 3-5 words (for example, snow-covered, icy, muddy, etc.). Return only the condition description. Trip report: {content}
+        <|eot_id|><|start_header_id|>assistant<|end_header_id|>"""
+        conditions_response = self.generator(conditions_prompt, num_return_sequences=1)[0]['generated_text']
         trail_conditions = conditions_response.strip()
 
         # Extract warnings
-        warnings_prompt = f"""Read this hiking trip report and list any hazards, warnings, or dangerous conditions mentioned (e.g., high winds, avalanche risk, turned back). Return as a comma-separated list or "none" if no warnings. Trip report: {content}"""
-        warnings_response = self.generator(warnings_prompt, max_length=100, num_return_sequences=1)[0]['generated_text']
+        warnings_prompt = f"""<|begin_of_text|><|start_header_id|>user<|end_header_id|>
+        Read this hiking trip report and list any hazards, warnings, or dangerous conditions mentioned (e.g., high wind gusts, avalanche risk, freezing). Return as a comma-separated list or "none" if no warnings. Trip report: {content}
+        <|eot_id|><|start_header_id|>assistant<|end_header_id|>"""
+        warnings_response = self.generator(warnings_prompt, num_return_sequences=1)[0]['generated_text']
         if warnings_response.strip().lower() == "none":
             warnings_list = []
         else:
@@ -88,8 +108,10 @@ class TrailReportProcessor:
         
 
         # Extract elevation info
-        elevation_prompt = f"""Read this hiking trip report and identify at what elevation the conditions changed or became notable (e.g., "snow above 13000 ft", "at treeline"). Return only the condition and the associated elevation description or "not specified". Trip report: {content}"""
-        elevation_response = self.generator(elevation_prompt, max_length=50, num_return_sequences=1)[0]['generated_text']
+        elevation_prompt = f"""<|begin_of_text|><|start_header_id|>user<|end_header_id|>
+        Read this hiking trip report and identify at what elevation the conditions changed or became notable (e.g., "snow above 13000 ft", "at treeline"). Return only the condition and the associated elevation description or "none". Trip report: {content}
+        <|eot_id|><|start_header_id|>assistant<|end_header_id|>"""
+        elevation_response = self.generator(elevation_prompt, num_return_sequences=1)[0]['generated_text']
         elevation_context = elevation_response.strip()
 
         extraction = {
